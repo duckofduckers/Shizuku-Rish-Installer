@@ -148,26 +148,37 @@ PackageManager::install() {
     acquire_lock
     validate_disk_space
 
-    echo_warn "Creating temporary directory..."
-    TEMP_DIR=$(mktemp -d) || { echo_error "Failed to create temporary directory"; exit 1; }
-    echo_success "Temporary directory created: $TEMP_DIR"
-
-    local MISSING=false
+    local both_exist=true
     local NAME
     for NAME in rish rish_shizuku.dex; do
         if [[ -f "$BIN/$NAME" ]]; then
             echo_warn "$NAME found"
         else
-            MISSING=true
+            both_exist=false
+            break
         fi
     done
-    if [[ "$MISSING" == false ]]; then
-        echo_warn "rish files already exist"
-        echo_warn "Cleaning up temporary directory..."
-        rm -rf "$TEMP_DIR"
-        echo_success "Temporary directory removed"
-        exit 0
+
+    if [[ "$both_exist" == true ]]; then
+        echo_error "rish files already exist"
+        exit 1
     fi
+
+    echo_warn "Creating temporary directory..."
+    TEMP_DIR=$(mktemp -d) || { echo_error "Failed to create temporary directory"; exit 1; }
+    echo_success "Temporary directory created: $TEMP_DIR"
+
+    for NAME in rish rish_shizuku.dex; do
+        if [[ -f "$BIN/$NAME" ]]; then
+            echo_warn "Removing existing $NAME..."
+            if rm -f "$BIN/$NAME"; then
+                echo_success "$NAME removed successfully"
+            else
+                echo_error "Failed to remove $NAME"
+                exit 1
+            fi
+        fi
+    done
 
     local APK_FILE="$TEMP_DIR/Shizuku.apk"
     PackageManager::download_apk "$SUBFLAG" "$APK_FILE"
@@ -212,8 +223,6 @@ PackageManager::install() {
     echo_warn "Cleaning up temporary directory..."
     rm -rf "$TEMP_DIR"
     echo_success "Temporary directory removed"
-
-    echo_success "Installation completed successfully"
 }
 
 PackageManager::uninstall() {
@@ -235,7 +244,8 @@ PackageManager::uninstall() {
         fi
     done
     if [[ "$ANY_DELETED" == false ]]; then
-        echo_warn "No rish files found"
+        echo_error "No rish files found"
+        exit 1
     fi
 }
 
@@ -245,6 +255,14 @@ PackageManager::main() {
 
     if [ "$(id -u)" -eq 0 ]; then
         echo_error "This script cannot be run as root"
+        exit 1
+    fi
+
+    if [[ $# -eq 0 ]]; then
+        echo_info "Usage: -install[:online|:offline][:silent]|-reinstall[:online|:offline][:silent]|-uninstall[:silent]"
+        exit 1
+    elif [[ $# -gt 1 ]]; then
+        echo_error "Only one parameter is allowed"
         exit 1
     fi
 
@@ -278,7 +296,7 @@ PackageManager::main() {
             IFS=':' read -ra SUBFLAGS <<< "${SUBFLAG_RAW:1}"
         fi
     else
-        echo_info "Usage: -install[:online|:offline][:silent]|-reinstall[:online|:offline][:silent]|-uninstall[:silent]"
+        echo_error "Invalid parameter"
         exit 1
     fi
 
@@ -295,6 +313,11 @@ PackageManager::main() {
             *) echo_error "Invalid subflag: $sf"; exit 1 ;;
         esac
     done
+
+    if [[ "$MODE" == "-uninstall" && ( $HAS_ONLINE -eq 1 || $HAS_OFFLINE -eq 1 ) ]]; then
+        echo_error "Invalid subflag for uninstall mode"
+        exit 1
+    fi
 
     if [[ $HAS_ONLINE -eq 1 && $HAS_OFFLINE -eq 1 ]]; then
         echo_error "Cannot use both online and offline subflags together"
